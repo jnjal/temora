@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Plus, Play, Pause, Square, Check, Music, X, Headphones, History, Trash2 } from 'lucide-react';
 import { formatHHMMSS, formatHoursAndMinutes, formatDateEn } from './utils/formatters';
@@ -161,7 +161,7 @@ export default function App() {
 
   // 1. Countdown Handler (3-2-1)
   useEffect(() => {
-    let timer: NodeJS.Timeout | null = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
     if (appState === 'countdown') {
       playCountdownTick(false);
       setCountdownValue(3);
@@ -188,7 +188,7 @@ export default function App() {
 
   // 2. High-precision Timer with Tab Drift Correction
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
     if (appState === 'active' && activeTimer && !activeTimer.isPaused) {
       lastTickRef.current = Date.now();

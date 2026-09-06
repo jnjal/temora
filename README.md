@@ -1,6 +1,6 @@
 # TEMORA ⏳
 
-[![Deploy to GitHub Pages](https://github.com/jnjal/TEMORA/actions/workflows/deploy.yml/badge.svg)](https://github.com/jnjal/TEMORA/actions/workflows/deploy.yml)
+[![Deploy to GitHub Pages](https://github.com/jnjal/temora/actions/workflows/deploy.yml/badge.svg)](https://github.com/jnjal/temora/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-white.svg)](LICENSE)
 
 > A distraction-free, pitch-black minimalist count-up focus timer designed for deep work, complete with 7-day productivity tracking and ambient audio streams.
@@ -42,8 +42,8 @@
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/jnjal/TEMORA.git
-   cd TEMORA
+   git clone https://github.com/jnjal/temora.git
+   cd temora
    ```
 
 2. **Install dependencies:**
@@ -89,7 +89,7 @@ This project is pre-configured for automated deployment to GitHub Pages via GitH
    - Under **Build and deployment** > **Source**, select **GitHub Actions**.
 3. The workflow (`.github/workflows/deploy.yml`) will build and deploy the app automatically to:
    ```
-   https://<username>.github.io/TEMORA/
+   https://<username>.github.io/temora/
    ```
 
 ---
