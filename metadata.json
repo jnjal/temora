@@ -1,0 +1,6 @@
+{
+  "name": "TEMORA",
+  "description": "Minimalist count-up focus timer with 7-day productivity history and background audio",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
