@@ -27,6 +27,7 @@
   - `Escape` — Close open modals (Music / History / Creation).
 - **🏷️ Dynamic Document Title**: Displays live elapsed time and activity name directly in your browser tab (`01:24:10 • Writing - TEMORA`).
 - **🎉 Completion Celebration**: Gentle completion chime and monochrome confetti animation upon finishing a session.
+- **📲 Installable PWA**: Add to home screen on Android/iOS, standalone fullscreen mode, and offline support via service worker.
 - **🖤 Pitch-Black OLED Design**: Pure black (`#000000`) theme with high-contrast typography and subtle zinc accents.
 
 ---
@@ -75,6 +76,7 @@
 - **Icons**: [Lucide React](https://lucide.dev/)
 - **Sound**: Native Web Audio API Synthesizer
 - **Visual FX**: [canvas-confetti](https://www.npmjs.com/package/canvas-confetti)
+- **PWA**: [vite-plugin-pwa](https://vite-pwa-org.netlify.app/) + Workbox (manifest, service worker, offline cache)
 - **CI/CD**: GitHub Actions (`.github/workflows/deploy.yml`)
 
 ---
