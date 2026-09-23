@@ -1087,8 +1087,9 @@ export default function App() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 10, scale: 0.95 }}
               transition={{ duration: 0.15 }}
-              className="mb-3 w-80 max-w-[calc(100vw-2rem)] max-h-[75vh] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-2xl p-4 shadow-2xl text-left space-y-3"
+              className="mb-3 w-80 max-w-[calc(100vw-2rem)]"
             >
+              <div className="max-h-[75dvh] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-2xl p-4 shadow-2xl text-left space-y-3">
               <div className="flex items-center justify-between pb-1 border-b border-zinc-900">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                   <Headphones className="w-3.5 h-3.5 text-zinc-400" />
@@ -1212,6 +1213,7 @@ export default function App() {
                   </div>
                 </div>
               )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1376,8 +1378,9 @@ export default function App() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 10, scale: 0.95 }}
               transition={{ duration: 0.15 }}
-              className="mb-3 w-80 max-w-[calc(100vw-2rem)] max-h-[75vh] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-3xl p-4 shadow-2xl text-left space-y-2"
+              className="mb-3 w-80 max-w-[calc(100vw-2rem)]"
             >
+              <div className="max-h-[75dvh] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-3xl p-4 shadow-2xl text-left space-y-2">
               <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                   <Settings className="w-3.5 h-3.5 text-zinc-400" />
@@ -1459,6 +1462,7 @@ export default function App() {
                   Notifications are blocked in the browser. Allow them in site settings for this to work.
                 </p>
               )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
