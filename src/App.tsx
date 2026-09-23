@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Play, Pause, Square, Check, Music, X, Headphones, History, Trash2 } from 'lucide-react';
+import { Plus, Play, Pause, Square, Check, Music, X, Headphones, History, Trash2, RotateCcw, RotateCw, Settings } from 'lucide-react';
 import { formatHHMMSS, formatHoursAndMinutes, formatDateEn } from './utils/formatters';
 import { playCountdownTick, playNotificationSound } from './utils/audio';
 import { AppState, ActiveTimer, CompletedSession, DayProductivity } from './types';
@@ -10,11 +10,62 @@ const STORAGE_KEYS = {
   ACTIVE: 'temora_active_timer_v1',
   HISTORY: 'temora_weekly_history_v1',
   YT_ID: 'temora_yt_id_v1',
+  VIDEO_HISTORY: 'temora_video_history_v1',
+  SETTINGS: 'temora_settings_v1',
+  RECENT_ACTIVITIES: 'temora_recent_activities_v1',
   // Backwards compatibility keys
   LEGACY_ACTIVE: 'black_timer_active_v1',
   LEGACY_HISTORY: 'black_timer_weekly_history_v2',
   LEGACY_YT: 'black_timer_yt_id',
 };
+
+const MAX_VIDEO_HISTORY = 3;
+const MAX_RECENT_ACTIVITIES = 6;
+
+const DEFAULT_SETTINGS = {
+  notificationsEnabled: false,
+  countdownSoundEnabled: true,
+  completionSoundEnabled: true,
+  completionSound: 'chime',
+  confettiEnabled: true,
+  musicVolume: 80,
+} as const;
+
+interface AppSettings {
+  notificationsEnabled: boolean;
+  countdownSoundEnabled: boolean;
+  completionSoundEnabled: boolean;
+  completionSound: 'chime' | 'bell' | 'digital';
+  confettiEnabled: boolean;
+  musicVolume: number;
+}
+
+interface RecentActivity {
+  title: string;
+  hours: number;
+  minutes: number;
+}
+
+interface VideoHistoryEntry {
+  id: string;
+  title: string;
+}
+
+// Local calendar-date key (YYYY-MM-DD) so day bucketing is timezone-safe
+function formatLocalDateKey(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// Formats seconds as M:SS / MM:SS (minutes and seconds)
+function formatMSS(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
 
 // Robust YouTube Video ID extractor (supports watch, live, shorts, youtu.be, embed, raw ID)
 function extractYouTubeId(url: string): string | null {
@@ -28,12 +79,26 @@ function extractYouTubeId(url: string): string | null {
   return match ? match[1] : null;
 }
 
-const PRESET_STREAMS = [
-  { name: 'Lofi Girl', id: 'jfKfPfyJRdk' },
-  { name: 'Lofi Chill', id: '5qap5aO4i9A' },
-  { name: 'Jazz & Lofi', id: 'DWcJFNfaw9c' },
-  { name: 'Ambient Rain', id: 'mPZkdNFkNps' },
-];
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      role="switch"
+      aria-checked={checked}
+      className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-black border border-zinc-800 transition-colors hover:border-zinc-700"
+    >
+      <span className="text-[11px] font-medium text-zinc-300">{label}</span>
+      <span className={`inline-block w-9 h-5 rounded-full transition-colors ${checked ? 'bg-white' : 'bg-zinc-700'}`}>
+        <span
+          className={`block w-3.5 h-3.5 rounded-full mt-[3px] ml-[3px] transition-all ${
+            checked ? 'bg-black translate-x-[18px]' : 'bg-zinc-400'
+          }`}
+        />
+      </span>
+    </button>
+  );
+}
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>('idle');
@@ -95,27 +160,245 @@ export default function App() {
   // Background Audio / YouTube State
   const [isMusicModalOpen, setIsMusicModalOpen] = useState(false);
   const [youtubeInput, setYoutubeInput] = useState('');
-  const [currentVideoId, setCurrentVideoId] = useState<string>(() => {
-    return (
-      localStorage.getItem(STORAGE_KEYS.YT_ID) ||
-      localStorage.getItem(STORAGE_KEYS.LEGACY_YT) ||
-      'jfKfPfyJRdk'
-    );
+  const [videoHistory, setVideoHistory] = useState<VideoHistoryEntry[]>(() => {
+    try {
+      const savedHist = localStorage.getItem(STORAGE_KEYS.VIDEO_HISTORY);
+      if (savedHist) {
+        const parsed = JSON.parse(savedHist);
+        if (Array.isArray(parsed)) {
+          const seen = new Set<string>();
+          const entries: VideoHistoryEntry[] = parsed
+            .map((x): VideoHistoryEntry | null => {
+              if (x && typeof x === 'object' && typeof (x as any).id === 'string') {
+                return { id: x.id, title: typeof x.title === 'string' ? x.title : '' };
+              }
+              if (typeof x === 'string' && x.length > 0) return { id: x, title: '' };
+              return null;
+            })
+            .filter((e): e is VideoHistoryEntry => e !== null)
+            .filter((e) => e.id.length > 0 && !seen.has(e.id) && (seen.add(e.id), true));
+          if (entries.length > 0) return entries.slice(0, MAX_VIDEO_HISTORY);
+        }
+      }
+    } catch {
+      // fall through to legacy migration
+    }
+    try {
+      const legacy =
+        localStorage.getItem(STORAGE_KEYS.YT_ID) ||
+        localStorage.getItem(STORAGE_KEYS.LEGACY_YT);
+      return legacy ? [{ id: legacy, title: '' }] : [];
+    } catch {
+      return [];
+    }
   });
+  const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
+  const [ytApiReady, setYtApiReady] = useState(false);
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [playerPos, setPlayerPos] = useState(0);
+  const [playerDur, setPlayerDur] = useState(0);
+  const playerRef = useRef<any>(null);
+  const loadedVideoRef = useRef<string | null>(null);
+  const currentVideoId = videoHistory[currentIndex]?.id ?? null;
 
   // Weekly History Modal State
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
 
+  // Recent activities memory (name + duration for quick start)
+  const [recentActivities, setRecentActivities] = useState<RecentActivity[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.RECENT_ACTIVITIES);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter((a) => a && typeof a === 'object' && typeof a.title === 'string' && a.title)
+            .slice(0, MAX_RECENT_ACTIVITIES);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+
+  // App settings
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return { ...DEFAULT_SETTINGS, ...parsed };
+      }
+    } catch {
+      // ignore
+    }
+    return { ...DEFAULT_SETTINGS };
+  });
+
+  // Settings Modal State
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+
   // Refs for tracking active session timestamps cleanly
   const lastTickRef = useRef<number>(Date.now());
+  const countdownRef = useRef<number>(3);
+  const settingsRef = useRef(settings);
+  const targetNotifySentRef = useRef<string | null>(null);
 
-  // Persist YouTube ID
   useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  // Persist app settings
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+  }, [settings]);
+
+  // Persist recent activities
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.RECENT_ACTIVITIES, JSON.stringify(recentActivities));
+  }, [recentActivities]);
+
+  // Request notification permission when the user enables notifications
+  useEffect(() => {
+    if (settings.notificationsEnabled && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, [settings.notificationsEnabled]);
+
+  // Notify once when the count-up reaches the target duration
+  useEffect(() => {
+    if (!activeTimer) return;
+    if (targetNotifySentRef.current === activeTimer.startTimeIso) return;
+    if (activeTimer.elapsedSeconds < activeTimer.targetSeconds) return;
+
+    targetNotifySentRef.current = activeTimer.startTimeIso;
+    if (
+      settings.notificationsEnabled &&
+      'Notification' in window &&
+      Notification.permission === 'granted'
+    ) {
+      try {
+        new Notification('TEMORA — Time is up', {
+          body: `${activeTimer.title} — ${formatHHMMSS(activeTimer.elapsedSeconds)}`,
+        });
+      } catch {
+        // ignore notification errors
+      }
+    }
+  }, [
+    activeTimer?.startTimeIso,
+    activeTimer?.targetSeconds,
+    activeTimer?.elapsedSeconds,
+    activeTimer?.title,
+    settings.notificationsEnabled,
+  ]);
+
+  // Apply music volume to the hidden player
+  useEffect(() => {
+    const p = playerRef.current;
+    if (!isPlayerReady || !p || typeof p.setVolume !== 'function') return;
+    p.setVolume(Math.max(0, Math.min(100, Math.round(settings.musicVolume))));
+  }, [isPlayerReady, settings.musicVolume]);
+
+  // Persist video history (recent 5) + current id for backwards compatibility
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.VIDEO_HISTORY, JSON.stringify(videoHistory));
     if (currentVideoId) {
       localStorage.setItem(STORAGE_KEYS.YT_ID, currentVideoId);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.YT_ID);
     }
+  }, [videoHistory, currentIndex, currentVideoId]);
+
+  // Load the YouTube IFrame API script once
+  useEffect(() => {
+    const w = window as unknown as Record<string, unknown>;
+    if ((w as any).YT?.Player) {
+      setYtApiReady(true);
+      return;
+    }
+    if (typeof (w as any).onYouTubeIframeAPIReady === 'function') return;
+    (w as any).onYouTubeIframeAPIReady = () => setYtApiReady(true);
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  }, []);
+
+  // Create the hidden player once the API is ready
+  useEffect(() => {
+    if (!ytApiReady || playerRef.current) return;
+    const startId = currentVideoId ?? '';
+    const created = new (window as any).YT.Player('temora-youtube-player', {
+      videoId: startId || undefined,
+      width: '1',
+      height: '1',
+      playerVars: {
+        autoplay: 0,
+        controls: 0,
+        loop: 1,
+        playlist: startId || undefined,
+        playsinline: 1,
+      },
+      events: {
+        onReady: () => {
+          setIsPlayerReady(true);
+          window.setTimeout(syncTitle, 1000);
+        },
+        onStateChange: () => syncTitle(),
+      },
+    });
+    playerRef.current = created;
+  }, [ytApiReady]);
+
+  // Sync video + play/pause state to the hidden player
+  useEffect(() => {
+    const p = playerRef.current;
+    if (!isPlayerReady || !p || !currentVideoId) return;
+    if (loadedVideoRef.current !== currentVideoId) {
+      loadedVideoRef.current = currentVideoId;
+      p.loadVideoById(currentVideoId);
+      window.setTimeout(syncTitle, 1500);
+    }
+    syncTitle();
+    if (isMusicPlaying) p.playVideo();
+    else p.pauseVideo();
+  }, [currentVideoId, isMusicPlaying, isPlayerReady]);
+
+  // Reset position/duration when switching videos
+  useEffect(() => {
+    setPlayerPos(0);
+    setPlayerDur(0);
   }, [currentVideoId]);
+
+  // Poll current position + duration while a video is loaded
+  useEffect(() => {
+    if (!isPlayerReady || !currentVideoId) return;
+    const tick = () => {
+      const p = playerRef.current;
+      if (!p) return;
+      const t = typeof p.getCurrentTime === 'function' ? p.getCurrentTime() : 0;
+      const d = typeof p.getDuration === 'function' ? p.getDuration() : 0;
+      setPlayerPos(Number.isFinite(t) ? Math.round(t) : 0);
+      if (Number.isFinite(d) && d > 0) setPlayerDur(Math.max(0, Math.round(d)));
+    };
+    tick();
+    const interval = window.setInterval(tick, 500);
+    return () => window.clearInterval(interval);
+  }, [isPlayerReady, currentVideoId]);
+
+  // Sync video + play/pause state to the hidden player
+  useEffect(() => {
+    const p = playerRef.current;
+    if (!isPlayerReady || !p || !currentVideoId) return;
+    if (loadedVideoRef.current !== currentVideoId) {
+      loadedVideoRef.current = currentVideoId;
+      p.loadVideoById(currentVideoId);
+    }
+    if (isMusicPlaying) p.playVideo();
+    else p.pauseVideo();
+  }, [currentVideoId, isMusicPlaying, isPlayerReady]);
 
   // Persist Active Timer
   useEffect(() => {
@@ -161,30 +444,31 @@ export default function App() {
 
   // 1. Countdown Handler (3-2-1)
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | null = null;
-    if (appState === 'countdown') {
-      playCountdownTick(false);
-      setCountdownValue(3);
+    if (appState !== 'countdown') return;
 
-      timer = setInterval(() => {
-        setCountdownValue((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer!);
-            playCountdownTick(true);
-            setAppState('active');
-            return 0;
-          } else {
-            playCountdownTick(false);
-            return prev - 1;
-          }
-        });
-      }, 1000);
-    }
+    countdownRef.current = 3;
+    setCountdownValue(3);
+    if (settingsRef.current.countdownSoundEnabled) playCountdownTick(false);
 
-    return () => {
-      if (timer) clearInterval(timer);
-    };
+    const timer = setInterval(() => {
+      countdownRef.current -= 1;
+      setCountdownValue(countdownRef.current);
+      if (countdownRef.current > 0) {
+        if (settingsRef.current.countdownSoundEnabled) playCountdownTick(false);
+      } else {
+        clearInterval(timer);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
   }, [appState]);
+
+  useEffect(() => {
+    if (appState === 'countdown' && countdownValue === 0 && countdownRef.current === 0) {
+      if (settingsRef.current.countdownSoundEnabled) playCountdownTick(true);
+      setAppState('active');
+    }
+  }, [appState, countdownValue]);
 
   // 2. High-precision Timer with Tab Drift Correction
   useEffect(() => {
@@ -256,7 +540,24 @@ export default function App() {
 
     setActiveTimer(newTimer);
     setAppState('countdown');
+    targetNotifySentRef.current = null;
+
+    // Remember this activity for quick start later
+    setRecentActivities((prev) => {
+      const next = [
+        { title: newTimer.title, hours: hoursInput, minutes: minutesInput },
+        ...prev.filter((a) => a.title.toLowerCase() !== newTimer.title.toLowerCase()),
+      ].slice(0, MAX_RECENT_ACTIVITIES);
+      return next;
+    });
   }, [titleInput, hoursInput, minutesInput]);
+
+  // Cancel / Abort timer without recording a session
+  const handleCancelTimer = useCallback(() => {
+    if (!window.confirm('Discard this focus session without saving?')) return;
+    setActiveTimer(null);
+    setAppState('idle');
+  }, []);
 
   // Toggle Pause / Resume
   const handleTogglePause = useCallback(() => {
@@ -275,16 +576,21 @@ export default function App() {
   const handleFinishTimer = useCallback(() => {
     if (!activeTimer) return;
 
-    playNotificationSound('chime', 90);
-    try {
-      confetti({
-        particleCount: 65,
-        spread: 75,
-        origin: { y: 0.6 },
-        colors: ['#ffffff', '#a1a1aa', '#52525b'],
-      });
-    } catch {
-      // Confetti fallback
+    const s = settingsRef.current;
+    if (s.completionSoundEnabled) {
+      playNotificationSound(s.completionSound, 90);
+    }
+    if (s.confettiEnabled) {
+      try {
+        confetti({
+          particleCount: 65,
+          spread: 75,
+          origin: { y: 0.6 },
+          colors: ['#ffffff', '#a1a1aa', '#52525b'],
+        });
+      } catch {
+        // Confetti fallback
+      }
     }
 
     const finishedRecord: CompletedSession = {
@@ -310,6 +616,7 @@ export default function App() {
         if (e.key === 'Escape') {
           setIsMusicModalOpen(false);
           setIsHistoryModalOpen(false);
+          setIsSettingsModalOpen(false);
         }
         return;
       }
@@ -317,22 +624,72 @@ export default function App() {
       if (e.key === 'Escape') {
         if (isMusicModalOpen) setIsMusicModalOpen(false);
         else if (isHistoryModalOpen) setIsHistoryModalOpen(false);
+        else if (isSettingsModalOpen) setIsSettingsModalOpen(false);
         else if (appState === 'create') setAppState('idle');
       } else if (e.code === 'Space' && appState === 'active') {
         e.preventDefault();
         handleTogglePause();
+      } else if (e.key === 'Enter' && appState === 'create') {
+        e.preventDefault();
+        handleStartCreation();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [appState, isMusicModalOpen, isHistoryModalOpen, handleStartCreation, handleTogglePause]);
+  }, [appState, isMusicModalOpen, isHistoryModalOpen, isSettingsModalOpen, handleStartCreation, handleTogglePause]);
+
+  // Pull the title of the currently loaded video from the player and persist it
+  // (reads only refs + stable setters, so it is safe in player event handlers)
+  const syncTitle = () => {
+    const p = playerRef.current;
+    if (!p || typeof p.getVideoData !== 'function') return;
+    try {
+      const data = p.getVideoData();
+      const id = data?.video_id ? String(data.video_id) : '';
+      const title = typeof data?.title === 'string' && data.title ? String(data.title) : '';
+      if (id && title) {
+        setVideoHistory((prev) => prev.map((e) => (e.id === id ? { ...e, title } : e)));
+      }
+    } catch {
+      // ignore unavailable metadata
+    }
+  };
+
+  // Load a video into the player and record it as the most recent
+  const loadVideo = useCallback((videoId: string) => {
+    setVideoHistory((prev) => {
+      const next = [
+        { id: videoId, title: '' },
+        ...prev.filter((h) => h.id !== videoId),
+      ].slice(0, MAX_VIDEO_HISTORY);
+      return next;
+    });
+    setCurrentIndex(0);
+  }, []);
+
+  const selectHistoryVideo = useCallback((idx: number) => {
+    setCurrentIndex(idx);
+  }, []);
+
+  const handleScrub = useCallback((value: number) => {
+    const p = playerRef.current;
+    setPlayerPos(value);
+    if (p && isPlayerReady) p.seekTo(Math.max(0, value), true);
+  }, [isPlayerReady]);
+
+  const seekBy = useCallback((deltaSeconds: number) => {
+    const p = playerRef.current;
+    if (!p || !isPlayerReady) return;
+    const current = typeof p.getCurrentTime === 'function' ? p.getCurrentTime() : 0;
+    p.seekTo(Math.max(0, current + deltaSeconds), true);
+  }, [isPlayerReady]);
 
   // Handle setting new YouTube audio link
   const handleApplyYoutubeUrl = () => {
     const extracted = extractYouTubeId(youtubeInput);
     if (extracted) {
-      setCurrentVideoId(extracted);
+      loadVideo(extracted);
       setIsMusicPlaying(true);
       setYoutubeInput('');
     }
@@ -356,12 +713,12 @@ export default function App() {
     for (let i = 0; i < 7; i++) {
       const d = new Date(today);
       d.setDate(d.getDate() - i);
-      const dateStrKey = d.toISOString().split('T')[0];
+      const dateStrKey = formatLocalDateKey(d);
 
       const daySessions = completedSessions.filter((s) => {
         try {
           const sessionDate = new Date(s.timestampIso);
-          return sessionDate.toISOString().split('T')[0] === dateStrKey;
+          return formatLocalDateKey(sessionDate) === dateStrKey;
         } catch {
           return false;
         }
@@ -395,15 +752,11 @@ export default function App() {
     <div className="h-dvh w-screen bg-black text-white font-['Inter',sans-serif] overflow-x-hidden overflow-y-auto flex flex-col justify-between items-center p-4 sm:p-8 select-none relative touch-manipulation">
       
       {/* Background YouTube Audio Stream */}
-      {currentVideoId && isMusicPlaying && (
-        <iframe
-          key={currentVideoId}
-          src={`https://www.youtube.com/embed/${currentVideoId}?autoplay=1&loop=1&playlist=${currentVideoId}&enablejsapi=1&controls=0`}
-          title="TEMORA Ambient Audio"
-          allow="autoplay"
-          className="w-1 h-1 absolute top-0 left-0 opacity-0 pointer-events-none -z-50"
-        />
-      )}
+      <div
+        id="temora-youtube-player"
+        className="w-1 h-1 absolute top-0 left-0 opacity-0 pointer-events-none -z-50"
+        aria-hidden="true"
+      />
 
       {/* Main Focus Stage */}
       <main className="w-full max-w-md flex flex-col items-center justify-center my-auto">
@@ -471,6 +824,44 @@ export default function App() {
                   />
                 </div>
 
+                {recentActivities.length > 0 && (
+                  <div>
+                    <span className="block text-[10px] text-zinc-500 mb-1.5">Recent Activities:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {recentActivities.map((act, i) => (
+                        <span
+                          key={`${act.title}-${i}`}
+                          className="flex items-center gap-0.5 bg-black border border-zinc-800 rounded-lg pl-2.5 pr-1 py-1"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTitleInput(act.title);
+                              setHoursInput(act.hours);
+                              setMinutesInput(act.minutes);
+                            }}
+                            title={act.title}
+                            className="max-w-[150px] truncate text-[11px] text-zinc-300 hover:text-white transition-colors"
+                          >
+                            {act.title}
+                            <span className="text-zinc-600 font-mono"> · {formatHoursAndMinutes(act.hours * 3600 + act.minutes * 60)}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRecentActivities((prev) => prev.filter((_, idx) => idx !== i))
+                            }
+                            className="p-1 rounded-md text-zinc-600 hover:text-rose-400 transition-colors"
+                            aria-label="Remove activity"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   {/* Preset Quick Buttons */}
                   <div className="grid grid-cols-4 gap-2 mb-3">
@@ -507,7 +898,7 @@ export default function App() {
                         min="0"
                         max="24"
                         value={hoursInput}
-                        onChange={(e) => setHoursInput(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                        onChange={(e) => setHoursInput(Math.max(0, Math.min(24, parseInt(e.target.value, 10) || 0)))}
                         className="w-full px-4 py-2.5 bg-black border border-zinc-800 rounded-xl font-mono text-center text-sm text-white focus:outline-none focus:border-white"
                       />
                     </div>
@@ -608,7 +999,7 @@ export default function App() {
               </div>
 
               {/* Controls */}
-              <div className="flex items-center justify-center gap-4 w-full pt-4">
+              <div className="flex items-center justify-center gap-3 w-full pt-4">
                 <button
                   id="pause-resume-btn"
                   onClick={handleTogglePause}
@@ -628,9 +1019,20 @@ export default function App() {
                 </button>
 
                 <button
+                  id="cancel-timer-btn"
+                  onClick={handleCancelTimer}
+                  className="px-4 py-3.5 rounded-2xl bg-zinc-950 hover:bg-zinc-900 text-rose-300/80 hover:text-rose-300 border border-zinc-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                  aria-label="Cancel Timer"
+                  title="Cancel timer without saving"
+                >
+                  <X className="w-4 h-4 stroke-[2.5]" />
+                  <span>Cancel</span>
+                </button>
+
+                <button
                   id="finish-timer-btn"
                   onClick={handleFinishTimer}
-                  className="px-5 py-3.5 rounded-2xl bg-zinc-950 hover:bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                  className="px-4 py-3.5 rounded-2xl bg-zinc-950 hover:bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-95"
                   aria-label="Finish Timer"
                 >
                   <Square className="w-4 h-4 fill-current" />
@@ -719,52 +1121,95 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Presets */}
-              <div className="space-y-1">
-                <span className="text-[10px] text-zinc-500 block">Featured Lofi Channels:</span>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {PRESET_STREAMS.map((st) => (
-                    <button
-                      key={st.id}
-                      onClick={() => {
-                        setCurrentVideoId(st.id);
-                        setIsMusicPlaying(true);
-                      }}
-                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-left border transition-all truncate ${
-                        currentVideoId === st.id && isMusicPlaying
-                          ? 'bg-white text-black border-white'
-                          : 'bg-black text-zinc-400 border-zinc-900 hover:border-zinc-700'
-                      }`}
-                    >
-                      {st.name}
-                    </button>
-                  ))}
-                </div>
+              {/* Recent Streams List */}
+              <div className="pt-2 border-t border-zinc-900 space-y-1.5">
+                <span className="text-[10px] text-zinc-500 block">Recent Streams:</span>
+                {videoHistory.length > 0 ? (
+                  <div className="space-y-1">
+                    {videoHistory.map((entry, idx) => (
+                      <button
+                        key={entry.id}
+                        onClick={() => selectHistoryVideo(idx)}
+                        title={entry.title || entry.id}
+                        className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl text-left border transition-all ${
+                          idx === currentIndex
+                            ? 'bg-white text-black border-white'
+                            : 'bg-black text-zinc-400 border-zinc-900 hover:border-zinc-700'
+                        }`}
+                      >
+                        <span className="text-[11px] font-medium truncate flex-1">{entry.title || entry.id}</span>
+                        {idx === currentIndex && (
+                          <span className="text-[10px] font-mono opacity-60 shrink-0">{isMusicPlaying ? 'Playing' : 'Paused'}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-zinc-600 py-1">No recent streams yet</div>
+                )}
               </div>
 
               {/* Player Controls */}
               {currentVideoId && (
-                <div className="flex items-center justify-between pt-2 border-t border-zinc-900">
-                  <button
-                    onClick={() => setIsMusicPlaying(!isMusicPlaying)}
-                    className="flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white border border-zinc-800 transition-colors"
-                  >
-                    {isMusicPlaying ? (
-                      <>
-                        <Pause className="w-3.5 h-3.5 fill-current" />
-                        <span>Stop</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>Play</span>
-                      </>
-                    )}
-                  </button>
+                <div className="space-y-2 pt-2 border-t border-zinc-900">
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={() => setIsMusicPlaying(!isMusicPlaying)}
+                      className="flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white border border-zinc-800 transition-colors"
+                    >
+                      {isMusicPlaying ? (
+                        <>
+                          <Pause className="w-3.5 h-3.5 fill-current" />
+                          <span>Stop</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Play</span>
+                        </>
+                      )}
+                    </button>
 
-                  <span className="text-[10px] text-zinc-500 font-mono">
-                    {isMusicPlaying ? 'Playing' : 'Stopped'}
-                  </span>
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      {isMusicPlaying ? 'Playing' : 'Stopped'}
+                    </span>
+                  </div>
+
+                  {/* Seek bar with minutes/seconds */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500 tabular-nums">
+                      <span>{formatMSS(playerPos)}</span>
+                      <span>{playerDur > 0 ? formatMSS(playerDur) : '--:--'}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={playerDur > 0 ? playerDur : 1}
+                      value={playerDur > 0 ? Math.min(playerPos, playerDur) : 0}
+                      onChange={(e) => handleScrub(Number(e.target.value))}
+                      disabled={playerDur <= 0}
+                      className="w-full accent-white disabled:opacity-30"
+                      aria-label="Seek position"
+                    />
+                    <div className="flex items-center justify-center gap-2 pt-0.5">
+                      <button
+                        onClick={() => seekBy(-15)}
+                        className="flex items-center gap-1 text-[11px] font-semibold px-3 py-1.5 rounded-xl bg-black text-zinc-300 border border-zinc-800 hover:text-white hover:border-zinc-600 transition-colors active:scale-95"
+                        aria-label="Back 15 seconds"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        15s
+                      </button>
+                      <button
+                        onClick={() => seekBy(15)}
+                        className="flex items-center gap-1 text-[11px] font-semibold px-3 py-1.5 rounded-xl bg-black text-zinc-300 border border-zinc-800 hover:text-white hover:border-zinc-600 transition-colors active:scale-95"
+                        aria-label="Forward 15 seconds"
+                      >
+                        15s
+                        <RotateCw className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </motion.div>
@@ -776,6 +1221,7 @@ export default function App() {
           onClick={() => {
             setIsMusicModalOpen(!isMusicModalOpen);
             setIsHistoryModalOpen(false);
+            setIsSettingsModalOpen(false);
           }}
           className={`relative p-3 rounded-full border transition-all duration-300 active:scale-95 shadow-xl ${
             isMusicPlaying
@@ -893,6 +1339,7 @@ export default function App() {
           onClick={() => {
             setIsHistoryModalOpen(!isHistoryModalOpen);
             setIsMusicModalOpen(false);
+            setIsSettingsModalOpen(false);
           }}
           className={`p-3 rounded-full border transition-all duration-300 active:scale-95 shadow-xl ${
             isHistoryModalOpen
@@ -903,6 +1350,121 @@ export default function App() {
           aria-label="Toggle History Modal"
         >
           <History className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* BOTTOM CENTER: SETTINGS */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 sm:bottom-6 z-50 flex flex-col items-center pb-[env(safe-area-inset-bottom)]">
+        <AnimatePresence>
+          {isSettingsModalOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.95 }}
+              transition={{ duration: 0.15 }}
+              className="mb-3 w-80 max-w-[calc(100vw-2rem)] max-h-[75vh] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-3xl p-4 shadow-2xl text-left space-y-2"
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                  <Settings className="w-3.5 h-3.5 text-zinc-400" />
+                  <span>Settings</span>
+                </div>
+                <button
+                  onClick={() => setIsSettingsModalOpen(false)}
+                  className="p-1 rounded-lg text-zinc-500 hover:text-white transition-colors"
+                  aria-label="Close Settings Modal"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-1.5 pt-1.5">
+                <Toggle
+                  label="Completion notifications"
+                  checked={settings.notificationsEnabled}
+                  onChange={(v) => setSettings((prev) => ({ ...prev, notificationsEnabled: v }))}
+                />
+                <Toggle
+                  label="Countdown ticks (3-2-1)"
+                  checked={settings.countdownSoundEnabled}
+                  onChange={(v) => setSettings((prev) => ({ ...prev, countdownSoundEnabled: v }))}
+                />
+                <Toggle
+                  label="Completion sound"
+                  checked={settings.completionSoundEnabled}
+                  onChange={(v) => setSettings((prev) => ({ ...prev, completionSoundEnabled: v }))}
+                />
+
+                {settings.completionSoundEnabled && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 pt-0">
+                    {(['chime', 'bell', 'digital'] as const).map((snd) => (
+                      <button
+                        key={snd}
+                        type="button"
+                        onClick={() => setSettings((prev) => ({ ...prev, completionSound: snd }))}
+                        className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold border transition-all active:scale-95 ${
+                          settings.completionSound === snd
+                            ? 'bg-white text-black border-white'
+                            : 'bg-black text-zinc-400 border-zinc-800 hover:border-zinc-600'
+                        }`}
+                      >
+                        {snd.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <Toggle
+                  label="Confetti on finish"
+                  checked={settings.confettiEnabled}
+                  onChange={(v) => setSettings((prev) => ({ ...prev, confettiEnabled: v }))}
+                />
+              </div>
+
+              {/* Music Volume */}
+              <div className="pt-1.5 border-t border-zinc-900">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-zinc-300">Music Volume</span>
+                  <span className="text-[11px] font-mono text-zinc-500">{settings.musicVolume}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={settings.musicVolume}
+                  onChange={(e) =>
+                    setSettings((prev) => ({ ...prev, musicVolume: Number(e.target.value) }))
+                  }
+                  className="mt-1.5 w-full accent-white"
+                  aria-label="Music volume"
+                />
+              </div>
+
+              {settings.notificationsEnabled && 'Notification' in window && Notification.permission === 'denied' && (
+                <p className="text-[10px] text-rose-300/80 leading-relaxed">
+                  Notifications are blocked in the browser. Allow them in site settings for this to work.
+                </p>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <button
+          id="settings-toggle-btn"
+          onClick={() => {
+            setIsSettingsModalOpen(!isSettingsModalOpen);
+            setIsMusicModalOpen(false);
+            setIsHistoryModalOpen(false);
+          }}
+          className={`p-3 rounded-full border transition-all duration-300 active:scale-95 shadow-xl ${
+            isSettingsModalOpen
+              ? 'bg-white text-black border-white'
+              : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-700'
+          }`}
+          title="Settings"
+          aria-label="Toggle Settings"
+        >
+          <Settings className="w-5 h-5" />
         </button>
       </div>
 
