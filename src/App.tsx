@@ -1367,15 +1367,18 @@ export default function App() {
         </button>
       </div>
 
+      {/* Click-outside backdrop for the settings panel (kept outside its
+          transformed container so fixed positioning covers the viewport) */}
+      {isSettingsModalOpen && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setIsSettingsModalOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* BOTTOM CENTER: SETTINGS */}
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 sm:bottom-6 z-50 flex flex-col items-center pb-[env(safe-area-inset-bottom)]">
-        {isSettingsModalOpen && (
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setIsSettingsModalOpen(false)}
-            aria-hidden="true"
-          />
-        )}
         <AnimatePresence>
           {isSettingsModalOpen && (
             <motion.div
