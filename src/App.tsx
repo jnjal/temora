@@ -1080,13 +1080,6 @@ export default function App() {
 
       {/* BOTTOM LEFT: YOUTUBE MUSIC CONTROLLER */}
       <div className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-50 flex flex-col items-start pb-[env(safe-area-inset-bottom)]">
-        {isMusicModalOpen && (
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setIsMusicModalOpen(false)}
-            aria-hidden="true"
-          />
-        )}
         <AnimatePresence>
           {isMusicModalOpen && (
             <motion.div
@@ -1247,13 +1240,6 @@ export default function App() {
 
       {/* BOTTOM RIGHT: 7-DAY PRODUCTIVITY HISTORY CONTROLLER */}
       <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 flex flex-col items-end pb-[env(safe-area-inset-bottom)]">
-        {isHistoryModalOpen && (
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setIsHistoryModalOpen(false)}
-            aria-hidden="true"
-          />
-        )}
         <AnimatePresence>
           {isHistoryModalOpen && (
             <motion.div
@@ -1367,12 +1353,16 @@ export default function App() {
         </button>
       </div>
 
-      {/* Click-outside backdrop for the settings panel (kept outside its
-          transformed container so fixed positioning covers the viewport) */}
-      {isSettingsModalOpen && (
+      {/* Click-outside backdrop: sits BELOW the floating panels (z-50) but above
+        the page, so inner panel clicks work and outside clicks close the pane */}
+      {(isMusicModalOpen || isHistoryModalOpen || isSettingsModalOpen) && (
         <div
           className="fixed inset-0 z-40"
-          onClick={() => setIsSettingsModalOpen(false)}
+          onClick={() => {
+            setIsMusicModalOpen(false);
+            setIsHistoryModalOpen(false);
+            setIsSettingsModalOpen(false);
+          }}
           aria-hidden="true"
         />
       )}
