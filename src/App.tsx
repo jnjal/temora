@@ -1080,6 +1080,13 @@ export default function App() {
 
       {/* BOTTOM LEFT: YOUTUBE MUSIC CONTROLLER */}
       <div className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-50 flex flex-col items-start pb-[env(safe-area-inset-bottom)]">
+        {isMusicModalOpen && (
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setIsMusicModalOpen(false)}
+            aria-hidden="true"
+          />
+        )}
         <AnimatePresence>
           {isMusicModalOpen && (
             <motion.div
@@ -1240,6 +1247,13 @@ export default function App() {
 
       {/* BOTTOM RIGHT: 7-DAY PRODUCTIVITY HISTORY CONTROLLER */}
       <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 flex flex-col items-end pb-[env(safe-area-inset-bottom)]">
+        {isHistoryModalOpen && (
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setIsHistoryModalOpen(false)}
+            aria-hidden="true"
+          />
+        )}
         <AnimatePresence>
           {isHistoryModalOpen && (
             <motion.div
@@ -1355,6 +1369,13 @@ export default function App() {
 
       {/* BOTTOM CENTER: SETTINGS */}
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 sm:bottom-6 z-50 flex flex-col items-center pb-[env(safe-area-inset-bottom)]">
+        {isSettingsModalOpen && (
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setIsSettingsModalOpen(false)}
+            aria-hidden="true"
+          />
+        )}
         <AnimatePresence>
           {isSettingsModalOpen && (
             <motion.div
