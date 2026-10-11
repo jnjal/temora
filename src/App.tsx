@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Play, Pause, Square, Check, Music, X, Headphones, History, Trash2, RotateCcw, RotateCw, Settings } from 'lucide-react';
+import { Plus, Play, Pause, Square, Check, Music, X, Headphones, History, Trash2, RotateCcw, RotateCw, Settings, Pencil } from 'lucide-react';
 import { formatHHMMSS, formatHoursAndMinutes, formatDateEn } from './utils/formatters';
 import { playCountdownTick, playNotificationSound } from './utils/audio';
 import { AppState, ActiveTimer, CompletedSession, DayProductivity } from './types';
@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS = {
   completionSound: 'chime',
   confettiEnabled: true,
   musicVolume: 80,
+  dailyGoalMinutes: 120,
 } as const;
 
 interface AppSettings {
@@ -38,6 +39,7 @@ interface AppSettings {
   completionSound: 'chime' | 'bell' | 'digital';
   confettiEnabled: boolean;
   musicVolume: number;
+  dailyGoalMinutes: number;
 }
 
 interface RecentActivity {
@@ -120,6 +122,22 @@ export default function App() {
       if (!saved) return null;
 
       const parsed: ActiveTimer = JSON.parse(saved);
+      if (
+        !parsed ||
+        typeof parsed.title !== 'string' ||
+        !parsed.title.trim() ||
+        !Number.isFinite(parsed.targetSeconds) ||
+        parsed.targetSeconds <= 0 ||
+        !Number.isFinite(parsed.elapsedSeconds) ||
+        parsed.elapsedSeconds < 0 ||
+        typeof parsed.isPaused !== 'boolean' ||
+        typeof parsed.startTimeIso !== 'string' ||
+        Number.isNaN(new Date(parsed.startTimeIso).getTime())
+      ) {
+        localStorage.removeItem(STORAGE_KEYS.ACTIVE);
+        localStorage.removeItem(STORAGE_KEYS.LEGACY_ACTIVE);
+        return null;
+      }
       // Re-synchronize elapsed seconds if timer was running when page unloaded
       if (!parsed.isPaused && parsed.lastResumeTimestamp) {
         const deltaSeconds = Math.max(0, Math.floor((Date.now() - parsed.lastResumeTimestamp) / 1000));
@@ -146,8 +164,18 @@ export default function App() {
         const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
         return Array.isArray(parsed)
           ? parsed.filter((s) => {
+              if (
+                !s ||
+                typeof s.id !== 'string' ||
+                typeof s.title !== 'string' ||
+                !Number.isFinite(s.elapsedSeconds) ||
+                s.elapsedSeconds < 0 ||
+                !Number.isFinite(s.targetSeconds) ||
+                s.targetSeconds < 0 ||
+                typeof s.timestampIso !== 'string'
+              ) return false;
               const t = new Date(s.timestampIso).getTime();
-              return !isNaN(t) && t >= sevenDaysAgo;
+              return Number.isFinite(t) && t >= sevenDaysAgo;
             })
           : [];
       }
@@ -204,6 +232,9 @@ export default function App() {
 
   // Weekly History Modal State
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingSessionTitle, setEditingSessionTitle] = useState('');
+  const [editingSessionMinutes, setEditingSessionMinutes] = useState('');
 
   // Recent activities memory (name + duration for quick start)
   const [recentActivities, setRecentActivities] = useState<RecentActivity[]>(() => {
@@ -229,7 +260,16 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        return { ...DEFAULT_SETTINGS, ...parsed };
+        return {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          musicVolume: Number.isFinite(Number(parsed.musicVolume))
+            ? Math.max(0, Math.min(100, Number(parsed.musicVolume)))
+            : DEFAULT_SETTINGS.musicVolume,
+          dailyGoalMinutes: Number.isFinite(Number(parsed.dailyGoalMinutes))
+            ? Math.max(15, Math.min(720, Math.round(Number(parsed.dailyGoalMinutes) / 15) * 15))
+            : DEFAULT_SETTINGS.dailyGoalMinutes,
+        };
       }
     } catch {
       // ignore
@@ -302,7 +342,7 @@ export default function App() {
     p.setVolume(Math.max(0, Math.min(100, Math.round(settings.musicVolume))));
   }, [isPlayerReady, settings.musicVolume]);
 
-  // Persist video history (recent 5) + current id for backwards compatibility
+  // Persist the three most recent video streams + current id for backwards compatibility
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.VIDEO_HISTORY, JSON.stringify(videoHistory));
     if (currentVideoId) {
@@ -388,27 +428,15 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [isPlayerReady, currentVideoId]);
 
-  // Sync video + play/pause state to the hidden player
+  // Persist only an in-progress timer. A finished session must not be restored as active after refresh.
   useEffect(() => {
-    const p = playerRef.current;
-    if (!isPlayerReady || !p || !currentVideoId) return;
-    if (loadedVideoRef.current !== currentVideoId) {
-      loadedVideoRef.current = currentVideoId;
-      p.loadVideoById(currentVideoId);
-    }
-    if (isMusicPlaying) p.playVideo();
-    else p.pauseVideo();
-  }, [currentVideoId, isMusicPlaying, isPlayerReady]);
-
-  // Persist Active Timer
-  useEffect(() => {
-    if (activeTimer) {
+    if (activeTimer && appState !== 'summary') {
       localStorage.setItem(STORAGE_KEYS.ACTIVE, JSON.stringify(activeTimer));
     } else {
       localStorage.removeItem(STORAGE_KEYS.ACTIVE);
       localStorage.removeItem(STORAGE_KEYS.LEGACY_ACTIVE);
     }
-  }, [activeTimer]);
+  }, [activeTimer, appState]);
 
   // Persist Weekly History (7-day retention)
   useEffect(() => {
@@ -602,14 +630,23 @@ export default function App() {
     };
 
     setCompletedSessions((prev) => [finishedRecord, ...prev]);
+    // Remove persisted timer immediately so a refresh cannot resurrect a completed session.
+    localStorage.removeItem(STORAGE_KEYS.ACTIVE);
+    localStorage.removeItem(STORAGE_KEYS.LEGACY_ACTIVE);
     setAppState('summary');
   }, [activeTimer]);
 
   // Global Keyboard Shortcuts (Space to pause, Esc to close modals)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        if (e.key === 'Enter' && appState === 'create') {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const isEditable = e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement ||
+        Boolean(target?.isContentEditable);
+
+      if (isEditable) {
+        if (e.key === 'Enter' && appState === 'create' && e.target instanceof HTMLInputElement && e.target.type === 'text') {
           e.preventDefault();
           handleStartCreation();
         }
@@ -617,6 +654,7 @@ export default function App() {
           setIsMusicModalOpen(false);
           setIsHistoryModalOpen(false);
           setIsSettingsModalOpen(false);
+          if (appState === 'create') setAppState('idle');
         }
         return;
       }
@@ -626,7 +664,12 @@ export default function App() {
         else if (isHistoryModalOpen) setIsHistoryModalOpen(false);
         else if (isSettingsModalOpen) setIsSettingsModalOpen(false);
         else if (appState === 'create') setAppState('idle');
-      } else if (e.code === 'Space' && appState === 'active') {
+      } else if (
+        e.code === 'Space' &&
+        appState === 'active' &&
+        !target?.closest('button, a, [role="button"]') &&
+        !e.altKey && !e.ctrlKey && !e.metaKey
+      ) {
         e.preventDefault();
         handleTogglePause();
       } else if (e.key === 'Enter' && appState === 'create') {
@@ -727,8 +770,8 @@ export default function App() {
       const dayTotal = daySessions.reduce((acc, curr) => acc + curr.elapsedSeconds, 0);
       totalSec += dayTotal;
 
-      // 86,400 seconds in a 24-hour day
-      const dayPctFloat = (dayTotal / 86400) * 100;
+      // Compare focused time with the user's configurable daily focus goal.
+      const dayPctFloat = (dayTotal / (settings.dailyGoalMinutes * 60)) * 100;
       const dayPctInt = Math.min(100, Math.round(dayPctFloat));
 
       let dayTitle = '';
@@ -746,7 +789,17 @@ export default function App() {
     }
 
     return { weeklyDaysData: days, totalWeeklySeconds: totalSec };
-  }, [completedSessions]);
+  }, [completedSessions, settings.dailyGoalMinutes]);
+
+  const handleSaveSessionEdit = useCallback((sessionId: string) => {
+    const title = editingSessionTitle.trim();
+    const minutes = Number(editingSessionMinutes);
+    if (!title || !Number.isFinite(minutes) || minutes < 0.01 || minutes > 10080) return;
+    setCompletedSessions((prev) => prev.map((session) => session.id === sessionId
+      ? { ...session, title, elapsedSeconds: Math.round(minutes * 60) }
+      : session));
+    setEditingSessionId(null);
+  }, [editingSessionTitle, editingSessionMinutes]);
 
   return (
     <div className="h-dvh w-screen bg-black text-white font-['Inter',sans-serif] overflow-x-hidden overflow-y-auto flex flex-col justify-between items-center p-4 sm:p-8 select-none relative touch-manipulation">
@@ -1249,7 +1302,7 @@ export default function App() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 10, scale: 0.95 }}
               transition={{ duration: 0.15 }}
-              className="mb-3 w-80 sm:w-96 max-w-[calc(100vw-2rem)] max-h-[75vh] bg-zinc-950 border border-zinc-800 rounded-3xl p-5 shadow-2xl text-left flex flex-col justify-between overflow-hidden"
+              className="mb-3 w-80 sm:w-96 max-w-[calc(100vw-2rem)] max-h-[75dvh] bg-zinc-950 border border-zinc-800 rounded-3xl p-5 shadow-2xl text-left flex flex-col justify-between overflow-hidden"
             >
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-zinc-900 shrink-0">
@@ -1303,11 +1356,10 @@ export default function App() {
 
                     {/* Percentage statement */}
                     <div className="text-xs text-zinc-300 font-medium leading-relaxed">
-                      You spent{' '}
                       <span className="font-bold font-mono text-white text-sm">
                         {day.dayPctInt}%
                       </span>{' '}
-                      of your day productively
+                      of daily goal reached · {day.sessions.length} {day.sessions.length === 1 ? 'session' : 'sessions'}
                     </div>
 
                     {/* Progress Bar */}
@@ -1322,9 +1374,61 @@ export default function App() {
                     {day.sessions.length > 0 && (
                       <div className="pt-1.5 space-y-1 border-t border-zinc-900/60">
                         {day.sessions.map((s) => (
-                          <div key={s.id} className="flex items-center justify-between text-[11px] text-zinc-500 font-mono">
-                            <span className="font-sans text-zinc-400 truncate max-w-[180px]">{s.title}</span>
-                            <span>{formatHHMMSS(s.elapsedSeconds)}</span>
+                          <div key={s.id} className="py-1 border-b border-zinc-900/50 last:border-0">
+                            {editingSessionId === s.id ? (
+                              <div className="space-y-2 py-1">
+                                <input
+                                  value={editingSessionTitle}
+                                  onChange={(e) => setEditingSessionTitle(e.target.value)}
+                                  maxLength={60}
+                                  aria-label="Edit session title"
+                                  className="w-full rounded-lg bg-zinc-950 border border-zinc-800 px-2 py-1.5 text-xs text-white focus:outline-none focus:border-zinc-500"
+                                />
+                                <label className="flex items-center gap-2 text-[10px] text-zinc-500">
+                                  Duration (minutes)
+                                  <input
+                                    type="number"
+                                    min={0.01}
+                                    max={10080}
+                                    step={0.01}
+                                    value={editingSessionMinutes}
+                                    onChange={(e) => setEditingSessionMinutes(e.target.value)}
+                                    aria-label="Edit session duration in minutes"
+                                    className="w-20 rounded-lg bg-zinc-950 border border-zinc-800 px-2 py-1.5 text-xs text-white"
+                                  />
+                                </label>
+                                <div className="flex justify-end gap-2">
+                                  <button onClick={() => setEditingSessionId(null)} className="px-2 py-1 rounded-md border border-zinc-800 text-[10px] text-zinc-400 hover:text-white">Cancel</button>
+                                  <button onClick={() => handleSaveSessionEdit(s.id)} disabled={!editingSessionTitle.trim() || !Number.isFinite(Number(editingSessionMinutes)) || Number(editingSessionMinutes) < 0.01 || Number(editingSessionMinutes) > 10080} className="px-2 py-1 rounded-md bg-white text-black text-[10px] font-bold disabled:opacity-40">Save</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 text-[11px] text-zinc-500 font-mono">
+                                <span className="font-sans text-zinc-400 truncate flex-1 min-w-0" title={s.title}>{s.title}</span>
+                                <span className="shrink-0">{formatHHMMSS(s.elapsedSeconds)}</span>
+                                <button
+                                  onClick={() => {
+                                    setEditingSessionId(s.id);
+                                    setEditingSessionTitle(s.title);
+                                    setEditingSessionMinutes(String(Number((s.elapsedSeconds / 60).toFixed(2))));
+                                  }}
+                                  className="p-1 rounded-md text-zinc-600 hover:text-white"
+                                  aria-label={`Edit ${s.title}`}
+                                  title="Edit session"
+                                ><Pencil className="w-3 h-3" /></button>
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm(`Delete the session “${s.title}”?`)) {
+                                      setCompletedSessions((prev) => prev.filter((session) => session.id !== s.id));
+                                      if (editingSessionId === s.id) setEditingSessionId(null);
+                                    }
+                                  }}
+                                  className="p-1 rounded-md text-zinc-600 hover:text-rose-400"
+                                  aria-label={`Delete ${s.title}`}
+                                  title="Delete session"
+                                ><Trash2 className="w-3 h-3" /></button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1436,6 +1540,25 @@ export default function App() {
                   checked={settings.confettiEnabled}
                   onChange={(v) => setSettings((prev) => ({ ...prev, confettiEnabled: v }))}
                 />
+              </div>
+
+              {/* Daily focus goal */}
+              <div className="pt-2 border-t border-zinc-900">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-zinc-300">Daily focus goal</span>
+                  <span className="text-[11px] font-mono text-zinc-500">{formatHoursAndMinutes(settings.dailyGoalMinutes * 60)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={15}
+                  max={720}
+                  step={15}
+                  value={settings.dailyGoalMinutes}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, dailyGoalMinutes: Number(e.target.value) }))}
+                  className="mt-1.5 w-full accent-white"
+                  aria-label="Daily focus goal in minutes"
+                />
+                <p className="text-[10px] text-zinc-600">Used to calculate daily progress. History stays on this device.</p>
               </div>
 
               {/* Music Volume */}
