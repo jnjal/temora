@@ -1,5 +1,7 @@
 # TEMORA ⏳
 
+[نسخهٔ فارسی README](README.fa.md)
+
 [![Deploy to GitHub Pages](https://github.com/jnjal/temora/actions/workflows/deploy.yml/badge.svg)](https://github.com/jnjal/temora/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-white.svg)](LICENSE)
 
