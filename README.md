@@ -16,17 +16,17 @@
 - **🔔 System Notifications**: Sends a browser notification the moment a session reaches its target duration.
 - **🧠 Recent Activities**: Frequently used activities (name + duration) are remembered for one-tap quick start.
 - **📊 7-Day Productivity Analytics**:
-  - Tracks daily completed focus sessions.
-  - Calculates daily productivity percentage relative to 24-hour day (`dayTotal / 86,400s`).
-  - Aggregates total weekly focus time.
+  - Tracks daily completed focus sessions and weekly focus time.
+  - Calculates daily progress against a configurable focus goal (15 minutes to 12 hours).
   - Automatic 7-day rolling data retention via `localStorage`.
   - Timezone-safe day bucketing.
+  - Edit or delete individual sessions from the history view.
 - **🎧 Ambient Audio & YouTube Streamer** (hidden YouTube IFrame player):
   - Full support for custom YouTube links (Standard, Shorts, Live streams, Embed, and raw IDs).
   - The last 3 played videos are saved by title and listed for quick switching.
   - True pause / resume, seek slider with `mm:ss` position, and ±15-second jump buttons.
   - Background audio playback during focus sessions.
-- **🎛️ Settings Panel**: Notifications, countdown ticks, completion sound (Chime / Bell / Digital), confetti, and music volume.
+- **🎛️ Settings Panel**: Notifications, countdown ticks, completion sound (Chime / Bell / Digital), confetti, music volume, and a configurable daily focus goal.
 - **⌨️ Keyboard Shortcuts**:
   - `Space` — Toggle Pause / Resume timer.
   - `Enter` — Start timer from creation screen (even when a preset button is focused).
