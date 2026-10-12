@@ -33,6 +33,15 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install
 
+      - name: Generate solid-star PNG icons
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+          convert -background black public/icons/star.svg -resize 192x192 public/icons/icon-192.png
+          convert -background black public/icons/star.svg -resize 512x512 public/icons/icon-512.png
+          convert -background black public/icons/star.svg -resize 512x512 public/icons/maskable-512.png
+          convert -background black public/icons/star.svg -resize 180x180 public/icons/apple-touch-icon.png
+
       - name: Build project
         run: npm run build
 
